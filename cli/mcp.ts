@@ -305,7 +305,7 @@ export async function startMcpServer(): Promise<void> {
 	server.registerTool(
 		'reply',
 		{
-			description: `Reply to a message you read with get_thread. It goes to that message's reply_target, with the subject taken from the original, and cannot be recalled. Fails with 409 if a newer message arrived since or reply_target no longer matches — read the thread again. To write to anyone else, use send_message.${idLookupHint(accounts)}`,
+			description: `Reply to a message you read with get_thread. It goes to that message's reply_target, with the subject taken from the original, and cannot be recalled. Fails with 409 if the conversation has a newer message than the one you are replying to, or reply_target no longer matches — read the thread again. To write to anyone else, use send_message.${idLookupHint(accounts)}`,
 			annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
 			inputSchema: {
 				id: z.string().describe('Message id to reply to.'),

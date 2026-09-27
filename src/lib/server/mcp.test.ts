@@ -65,7 +65,15 @@ async function connect(options: { sendEnabled?: boolean; scopes?: string[] } = {
 		return { isError: Boolean(result.isError), text, json: () => JSON.parse(text) };
 	};
 	const addInbound = (id: string, at: string) => insert.run(id, user.id, at);
-	return { client, call, sent, addInbound };
+	/** A reply sent from the web app, outside this MCP session. */
+	const addOutbound = (id: string, at: string) =>
+		sqlite
+			.query(
+				`INSERT INTO emails (id, user_id, direction, from_addr, to_addr, subject, thread_id, created_at)
+				 VALUES (?, ?, 'outbound', 'ada@example.com', 'sam@other.test', 'Re: Plans', 'm1', ?)`
+			)
+			.run(id, user.id, at);
+	return { client, call, sent, addInbound, addOutbound };
 }
 
 describe('hosted MCP tools', () => {
@@ -137,6 +145,21 @@ describe('hosted MCP tools', () => {
 		});
 
 		assert.equal(result.isError, true);
+		assert.equal(result.json().error.code, 'conversation_advanced');
+		assert.equal(sent.length, 0);
+	});
+
+	test('reply refuses once the person already answered from the web app', async () => {
+		const { call, sent, addOutbound } = await connect();
+		addOutbound('m2', '2026-09-01 11:00:00');
+
+		const result = await call('reply', {
+			id: 'm1',
+			expected_recipients: ['sam@other.test'],
+			text: 'Thursday works.',
+			idempotency_key: 'reply-key-0004'
+		});
+
 		assert.equal(result.json().error.code, 'conversation_advanced');
 		assert.equal(sent.length, 0);
 	});

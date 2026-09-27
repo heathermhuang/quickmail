@@ -536,13 +536,26 @@ describe('assertReplyReviewed', () => {
 		return { db, add };
 	}
 
-	test('passes when nothing changed since the agent read the thread', async () => {
+	test('passes when answering the latest message', async () => {
+		const { db, add } = thread();
+		add('m1', 'inbound', 'sam@other.test', 'ada@example.com', '2026-09-01 10:00:00');
+		add('m2', 'outbound', 'ada@example.com', 'sam@other.test', '2026-09-01 11:00:00');
+		const original = (await getEmailForUser(db, user.id, 'm2'))!;
+
+		await assertReplyReviewed(db, user.id, original, ['sam@other.test'], ['SAM@other.test']);
+	});
+
+	test('refuses a reply once someone else already answered', async () => {
 		const { db, add } = thread();
 		add('m1', 'inbound', 'sam@other.test', 'ada@example.com', '2026-09-01 10:00:00');
 		add('m2', 'outbound', 'ada@example.com', 'sam@other.test', '2026-09-01 11:00:00');
 		const original = (await getEmailForUser(db, user.id, 'm1'))!;
 
-		await assertReplyReviewed(db, user.id, original, ['sam@other.test'], ['SAM@other.test']);
+		await assert.rejects(
+			assertReplyReviewed(db, user.id, original, ['sam@other.test'], ['sam@other.test']),
+			(error: unknown) =>
+				error instanceof ReplyGuardError && error.code === 'conversation_advanced'
+		);
 	});
 
 	test('refuses a reply once a newer message arrived', async () => {

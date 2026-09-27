@@ -186,9 +186,10 @@ function sameAddresses(left: string[], right: string[]): boolean {
 }
 
 /**
- * An agent replies from what it last read. Refuse when that is stale: a newer
- * message arrived in the conversation, or the reply would reach someone other
- * than the recipients it reviewed.
+ * An agent replies from what it last read. Refuse when that is stale: the
+ * conversation has moved past the message it is answering — a new message from
+ * them, or a reply someone else sent meanwhile — or the reply would reach
+ * someone other than the recipients it reviewed.
  */
 export async function assertReplyReviewed(
 	db: D1Database,
@@ -199,10 +200,10 @@ export async function assertReplyReviewed(
 ): Promise<void> {
 	const messages = await listThreadMessages(db, userId, original);
 	const index = messages.findIndex((message) => message.id === original.id);
-	if (index >= 0 && messages.slice(index + 1).some((message) => message.direction === 'inbound')) {
+	if (index >= 0 && index < messages.length - 1) {
 		throw new ReplyGuardError(
 			'conversation_advanced',
-			'A newer message arrived in this conversation. Read it again before replying.'
+			'This conversation has a newer message than the one you are replying to. Read it again and reply to the latest message.'
 		);
 	}
 	if (!sameAddresses(recipients, expectedRecipients)) {

@@ -335,9 +335,9 @@ Built for agents that read untrusted mail:
   instructions, and tools carry MCP hints (`readOnlyHint`, `destructiveHint`)
   so clients can auto-approve reads and confirm sends.
 - `reply` goes to the message's `reply_target` from `get_thread` and requires
-  it back as `expected_recipients`. It fails with `conversation_advanced` if a
-  newer message arrived since the agent read the thread, or
-  `recipient_changed` if the target differs — writing to anyone else takes
+  it back as `expected_recipients`. It fails with `conversation_advanced` if the
+  conversation has a newer message than the one being answered (theirs, or a
+  reply someone else sent meanwhile), or `recipient_changed` if the target differs — writing to anyone else takes
   `send_message`. Errors like these come back as `{ "error": { "code", "message",
   "retryable" } }`.
 - Sends made with an API key or MCP token — REST, CLI, or MCP — are capped at

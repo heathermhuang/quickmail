@@ -20,7 +20,7 @@ import {
 	resolveReplyFromAddress,
 	sendAndStore
 } from './outbox';
-import { IDEMPOTENCY_KEY_PATTERN, SendAttemptError } from './send-attempts';
+import { IDEMPOTENCY_KEY_PATTERN, keyAlreadySent, SendAttemptError } from './send-attempts';
 import { SendPolicyError, type ApiSendPolicy } from './send-policy';
 import { buildReferences, displaySubject } from './threads';
 import type { EmailProvider } from './email-provider';
@@ -360,7 +360,7 @@ export function createMcpServer(ctx: McpContext): McpServer {
 			'reply',
 			{
 				description:
-					"Reply to a message you read with get_thread. It goes to that message's reply_target, with subject and threading headers taken from the original, and cannot be recalled. Fails with conversation_advanced if a newer message arrived since, or recipient_changed if reply_target no longer matches — read the thread again. To write to anyone else, use send_message.",
+					"Reply to a message you read with get_thread. It goes to that message's reply_target, with subject and threading headers taken from the original, and cannot be recalled. Fails with conversation_advanced if the conversation has a newer message than the one you are replying to (theirs, or a reply someone else sent), or recipient_changed if reply_target no longer matches — read the thread again. To write to anyone else, use send_message.",
 				annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
 				inputSchema: {
 					id: z.string().describe('Message id to reply to.'),
@@ -382,13 +382,17 @@ export function createMcpServer(ctx: McpContext): McpServer {
 					if (!original) return textResult(`No message with id ${id}`, true);
 					const subject = /^re:/i.test(original.subject) ? original.subject : `Re: ${original.subject}`;
 					const recipient = original.direction === 'inbound' ? original.from_addr : original.to_addr;
-					await assertReplyReviewed(
-						ctx.db,
-						ctx.user.id,
-						original,
-						replyTarget(original),
-						expected_recipients
-					);
+					// A retry of a reply that already went out replays it; its own sent
+					// message must not count as the conversation moving on.
+					if (!(await keyAlreadySent(ctx.db, ctx.user.id, idempotency_key))) {
+						await assertReplyReviewed(
+							ctx.db,
+							ctx.user.id,
+							original,
+							replyTarget(original),
+							expected_recipients
+						);
+					}
 					const fromAddress = fromAddressId
 						? undefined
 						: await resolveReplyFromAddress(ctx.db, ctx.user, original);

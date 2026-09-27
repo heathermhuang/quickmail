@@ -18,7 +18,7 @@ import {
 	resolveReplyFromAddress,
 	sendAndStore
 } from '$lib/server/outbox';
-import { readIdempotencyKey } from '$lib/server/send-attempts';
+import { keyAlreadySent, readIdempotencyKey } from '$lib/server/send-attempts';
 import { apiSendPolicyFor } from '$lib/server/send-policy';
 import { parseEmailAddresses } from '$lib/server/email-address';
 import { buildReferences, displaySubject } from '$lib/server/threads';
@@ -173,7 +173,11 @@ export const POST: RequestHandler = async ({ params, request, locals, platform }
 		: await resolveReplyFromAddress(db, locals.user, original);
 
 	try {
-		if (Array.isArray(body.expectedRecipients)) {
+		// A retry of a reply that already went out only replays it.
+		const replaying = idempotencyKey
+			? await keyAlreadySent(db, locals.user.id, idempotencyKey)
+			: false;
+		if (Array.isArray(body.expectedRecipients) && !replaying) {
 			await assertReplyReviewed(
 				db,
 				locals.user.id,
