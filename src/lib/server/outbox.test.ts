@@ -306,7 +306,7 @@ describe('sendAndStore with an idempotency key', () => {
 				return send(input);
 			}
 		} as unknown as EmailProvider;
-		const env = { DB: db, ATTACHMENTS: {} as R2Bucket };
+		const env = { DB: db, ATTACHMENTS: { put: async () => null } as unknown as R2Bucket };
 		const outbound = () =>
 			sqlite.query(`SELECT id FROM emails WHERE direction = 'outbound'`).all() as { id: string }[];
 		return { env, provider, sent, outbound, sqlite };
@@ -405,6 +405,21 @@ describe('sendAndStore with an idempotency key', () => {
 
 		assert.equal(sent.length, 2);
 		assert.notEqual(sent[1].idempotencyKey, sent[0].idempotencyKey);
+	});
+
+	test('an attachment sent inline instead of attached is a different message', async () => {
+		const { env, provider, sent } = setup(async () => ({ providerId: 'provider-1' }));
+		const file = { filename: 'logo.png', type: 'image/png', content: 'aGVsbG8=' };
+
+		await sendAndStore(env, provider, user, { ...message, attachments: [file] });
+		await assert.rejects(
+			sendAndStore(env, provider, user, {
+				...message,
+				attachments: [{ ...file, disposition: 'inline', contentId: 'logo' }]
+			}),
+			SendAttemptError
+		);
+		assert.equal(sent.length, 1);
 	});
 
 	test('reusing a key for a different message is refused without sending', async () => {

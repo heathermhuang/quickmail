@@ -156,7 +156,19 @@ export async function resolveReplyFromAddress(
 }
 
 /** What the recipient would receive — a reused Idempotency-Key must match it. */
-function composeFingerprint(from: MailAddress, input: ComposeInput): Promise<string> {
+async function composeFingerprint(from: MailAddress, input: ComposeInput): Promise<string> {
+	// Each attachment is hashed on its own: joining up to 25 MB of base64 into
+	// one string, then encoding it, would hold several copies in memory at once.
+	const attachments: string[][] = [];
+	for (const attachment of input.attachments ?? []) {
+		attachments.push([
+			attachment.filename,
+			attachment.type,
+			attachment.disposition ?? '',
+			attachment.contentId ?? '',
+			await sha256Hex(attachment.content)
+		]);
+	}
 	return sha256Hex(
 		JSON.stringify({
 			from: from.address,
@@ -167,11 +179,7 @@ function composeFingerprint(from: MailAddress, input: ComposeInput): Promise<str
 			text: input.text?.trim() ?? '',
 			html: input.html?.trim() ?? '',
 			inReplyTo: input.inReplyTo ?? null,
-			attachments: (input.attachments ?? []).map((attachment) => [
-				attachment.filename,
-				attachment.type,
-				attachment.content
-			])
+			attachments
 		})
 	);
 }
