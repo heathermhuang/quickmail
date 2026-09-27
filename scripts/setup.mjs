@@ -1044,11 +1044,12 @@ async function setupTypesafe() {
  * generated once and never replaced: a new value makes every saved key
  * unreadable.
  */
-function ensureEncryptionKey() {
+function ensureEncryptionKey(workerName) {
 	const listed = tryWrangler(['secret', 'list']);
-	// On a first run the Worker is not deployed yet, so listing fails with "not
-	// found" — it has no secrets, and creating the key is safe.
-	const firstRun = !listed.ok && /\bnot found\b/i.test(listed.text);
+	// On a first run this Worker is not deployed yet, so listing fails with
+	// wrangler's `Worker "<name>" not found` — it has no secrets, and creating the
+	// key is safe. Any other failure might hide an existing key.
+	const firstRun = !listed.ok && listed.text.includes(`Worker "${workerName}" not found`);
 	if (listed.ok && /\bENCRYPTION_KEY\b/.test(listed.text)) {
 		ok('ENCRYPTION_KEY is already set; keeping it');
 	} else if (listed.ok || firstRun) {
@@ -1207,7 +1208,7 @@ async function main() {
 
 	section(7, total, 'Inbox tabs and AI drafting');
 	const typesafeKey = await setupTypesafe();
-	ensureEncryptionKey();
+	ensureEncryptionKey(workerName);
 
 	section(8, total, 'Database');
 	migrate(true, false);
