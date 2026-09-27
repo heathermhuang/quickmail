@@ -85,7 +85,7 @@ export function buildDraftPrompt(input: DraftPromptInput): { system: string; pro
 		const attachments =
 			latest && message.attachments.length > 0
 				? `\n\nAttachments on this message, which you have not seen — don't claim to know what is in them: ${message.attachments
-						.map((file) => `${fence(file.filename)} (${file.content_type}, ${formatSize(file.size_bytes)})`)
+						.map((file) => `${fence(file.filename)} (${fence(file.content_type)}, ${formatSize(file.size_bytes)})`)
 						.join('; ')}`
 				: '';
 		return `<message from="${attribute(from)}" date="${attribute(message.created_at)}"${latest ? ' latest="true"' : ''}>\n${fence(bodyOf(message))}${attachments}\n</message>`;
