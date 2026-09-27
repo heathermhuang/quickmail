@@ -11,6 +11,7 @@
  *   bash scripts/setup.sh
  */
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
@@ -1038,6 +1039,27 @@ async function setupTypesafe() {
 	return apiKey;
 }
 
+/**
+ * ENCRYPTION_KEY seals the AI provider keys people save in Settings. It is
+ * generated once and never replaced: a new value makes every saved key
+ * unreadable.
+ */
+function ensureEncryptionKey() {
+	const listed = tryWrangler(['secret', 'list']);
+	if (listed.ok && /\bENCRYPTION_KEY\b/.test(listed.text)) {
+		ok('ENCRYPTION_KEY is already set; keeping it');
+	} else {
+		putSecret('ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+	}
+
+	const local = existsSync(devVarsFile) ? readFileSync(devVarsFile, 'utf8') : '';
+	const current = local.match(/^ENCRYPTION_KEY=(.*)$/m)?.[1]?.trim() ?? '';
+	if (current.length < 32 || /^REPLACE_WITH_/i.test(current)) {
+		upsertEnvFile(devVarsFile, { ENCRYPTION_KEY: randomBytes(32).toString('base64') });
+		ok('wrote a local ENCRYPTION_KEY to .dev.vars');
+	}
+}
+
 function printNextSteps(state) {
 	log(`\n${c.bold('Next')}`);
 	const app = state.publicUrl ? `${state.publicUrl}/setup` : 'the deployed URL /setup (or http://localhost:5173/setup after bun run dev)';
@@ -1176,8 +1198,9 @@ async function main() {
 		}
 	}
 
-	section(7, total, 'Inbox tabs');
+	section(7, total, 'Inbox tabs and AI drafting');
 	const typesafeKey = await setupTypesafe();
+	ensureEncryptionKey();
 
 	section(8, total, 'Database');
 	migrate(true, false);
