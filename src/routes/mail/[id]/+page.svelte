@@ -4,7 +4,7 @@
 	import RichTextEditor from '$lib/components/RichTextEditor.svelte';
 	import AttachmentPicker from '$lib/components/AttachmentPicker.svelte';
 	import ThreadMessage from '$lib/components/ThreadMessage.svelte';
-	import { htmlToPlainText, isHtmlEmpty } from '$lib/utils/html';
+	import { htmlToPlainText, isHtmlEmpty, plainTextToHtml } from '$lib/utils/html';
 	import { hasInAppHistory, requestSkipViewTransition } from '$lib/app-chrome';
 	import { APP_NAME } from '$lib/constants';
 	import { plural, t } from '$lib/i18n';
@@ -24,6 +24,7 @@
 	let replyKey = crypto.randomUUID();
 	let forwardKey = crypto.randomUUID();
 	let error = $state('');
+	let drafting = $state(false);
 
 	type ForwardTarget = { kind: 'thread' } | { kind: 'message'; id: string };
 	let forwardTarget = $state<ForwardTarget | null>(null);
@@ -292,6 +293,30 @@
 			error = t('common.networkError');
 		} finally {
 			sending = false;
+		}
+	}
+
+	/** Fill the reply box with an AI draft of an answer to the newest message. */
+	async function draftWithAi() {
+		if (!latest || drafting) return;
+		if (!isHtmlEmpty(replyHtml) && !confirm(t('thread.replaceWithDraft'))) return;
+
+		drafting = true;
+		error = '';
+		try {
+			const res = await fetch(`/api/mail/${encodeURIComponent(latest.id)}/draft-reply`, {
+				method: 'POST'
+			});
+			const body = (await res.json()) as { text?: string; error?: string };
+			if (!res.ok || !body.text) {
+				error = body.error ?? t('thread.draftFailed');
+				return;
+			}
+			replyHtml = plainTextToHtml(body.text);
+		} catch {
+			error = t('common.networkError');
+		} finally {
+			drafting = false;
 		}
 	}
 
@@ -578,6 +603,18 @@
 			<div class="reply-footer">
 				<AttachmentPicker bind:attachments={replyAttachments} />
 				<div class="reply-actions">
+					{#if $page.data.aiDrafting}
+						<button
+							type="button"
+							class="btn-ghost"
+							disabled={drafting || sending}
+							aria-busy={drafting}
+							onclick={() => void draftWithAi()}
+						>
+							<Icon name="sparkling-line" size={15} />
+							{drafting ? t('thread.drafting') : t('thread.draftReply')}
+						</button>
+					{/if}
 					<button type="button" class="btn-ghost" onclick={() => (replyOpen = false)}>
 						{t('common.cancel')}
 					</button>
