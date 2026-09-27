@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
 	import Icon from '$lib/components/Icon.svelte';
 	import { t } from '$lib/i18n';
 
@@ -11,6 +12,8 @@
 		fallback?: { kind: Kind; model: string } | null;
 		canStoreKeys: boolean;
 		workersAiAvailable?: boolean;
+		/** The user's standing instructions for every draft. */
+		instructions?: string;
 	};
 
 	/** `user`: the signed-in person's own key. `instance`: the admin's default for everyone. */
@@ -33,6 +36,8 @@
 	let testing = $state(false);
 	let error = $state('');
 	let notice = $state('');
+	let instructions = $state('');
+	let savingInstructions = $state(false);
 
 	const kinds = $derived<Kind[]>(
 		scope === 'instance' && settings?.workersAiAvailable
@@ -98,6 +103,7 @@
 			}
 			settings = body;
 			fill(body.provider);
+			instructions = body.instructions ?? '';
 		} catch {
 			error = t('common.networkError');
 		}
@@ -122,10 +128,37 @@
 			settings = { ...settings!, provider: body.provider };
 			fill(body.provider);
 			notice = t('ai.saved');
+			// The shell decides whether to offer "Draft reply" from the layout data.
+			await invalidateAll();
 		} catch {
 			error = t('common.networkError');
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function saveInstructions(event: SubmitEvent) {
+		event.preventDefault();
+		savingInstructions = true;
+		error = '';
+		notice = '';
+		try {
+			const response = await fetch(endpoint, {
+				method: 'PATCH',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ instructions })
+			});
+			const body = (await response.json()) as { instructions?: string; error?: string };
+			if (!response.ok) {
+				error = body.error ?? t('common.tryAgain');
+				return;
+			}
+			instructions = body.instructions ?? '';
+			notice = t('ai.instructionsSaved');
+		} catch {
+			error = t('common.networkError');
+		} finally {
+			savingInstructions = false;
 		}
 	}
 
@@ -162,6 +195,7 @@
 			}
 			settings = { ...settings!, provider: null };
 			fill(null);
+			await invalidateAll();
 		} catch {
 			error = t('common.networkError');
 		}
@@ -258,6 +292,26 @@
 		</form>
 	{/if}
 
+	{#if settings && scope === 'user'}
+		<form class="ai-form instructions" onsubmit={saveInstructions}>
+			<label class="field">
+				<span>{t('ai.instructions')}</span>
+				<textarea
+					bind:value={instructions}
+					rows="4"
+					maxlength={4000}
+					placeholder={t('ai.instructionsPlaceholder')}
+				></textarea>
+			</label>
+			<p class="field-hint">{t('ai.instructionsHint')}</p>
+			<div class="actions">
+				<button type="submit" class="btn-primary" disabled={savingInstructions}>
+					{savingInstructions ? t('common.saving') : t('common.save')}
+				</button>
+			</div>
+		</form>
+	{/if}
+
 	{#if notice}<p class="notice" role="status">{notice}</p>{/if}
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
@@ -335,7 +389,14 @@
 		font-weight: 500;
 	}
 
-	.field input {
+	.instructions {
+		margin-top: 1.5rem;
+		padding-top: 1.25rem;
+		border-top: 1px solid var(--color-line);
+	}
+
+	.field input,
+	.field textarea {
 		border: 1px solid var(--color-line);
 		border-radius: 0.5rem;
 		padding: 0.5rem 0.625rem;
