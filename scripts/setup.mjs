@@ -1046,14 +1046,17 @@ async function setupTypesafe() {
  */
 function ensureEncryptionKey() {
 	const listed = tryWrangler(['secret', 'list']);
-	if (!listed.ok) {
+	// On a first run the Worker is not deployed yet, so listing fails with "not
+	// found" — it has no secrets, and creating the key is safe.
+	const firstRun = !listed.ok && /\bnot found\b/i.test(listed.text);
+	if (listed.ok && /\bENCRYPTION_KEY\b/.test(listed.text)) {
+		ok('ENCRYPTION_KEY is already set; keeping it');
+	} else if (listed.ok || firstRun) {
+		putSecret('ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+	} else {
 		// Can't tell whether one exists, and replacing it would lose every saved key.
 		warn('Could not list Worker secrets, so ENCRYPTION_KEY was left alone.');
 		warn('If it is not set yet: openssl rand -base64 32 | bunx wrangler secret put ENCRYPTION_KEY');
-	} else if (/\bENCRYPTION_KEY\b/.test(listed.text)) {
-		ok('ENCRYPTION_KEY is already set; keeping it');
-	} else {
-		putSecret('ENCRYPTION_KEY', randomBytes(32).toString('base64'));
 	}
 
 	const local = existsSync(devVarsFile) ? readFileSync(devVarsFile, 'utf8') : '';
