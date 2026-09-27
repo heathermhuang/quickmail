@@ -34,8 +34,12 @@
 	let apiKey = $state('');
 	let busy = $state(false);
 	let testing = $state(false);
-	let error = $state('');
-	let notice = $state('');
+	let loadError = $state('');
+	// Each form reports under its own buttons, even when both are busy at once.
+	let providerNotice = $state('');
+	let providerError = $state('');
+	let instructionsNotice = $state('');
+	let instructionsError = $state('');
 	let instructions = $state('');
 	let savingInstructions = $state(false);
 
@@ -98,22 +102,22 @@
 			const response = await fetch(endpoint, { cache: 'no-store' });
 			const body = (await response.json()) as Settings & { error?: string };
 			if (!response.ok) {
-				error = body.error ?? t('common.tryAgain');
+				loadError = body.error ?? t('common.tryAgain');
 				return;
 			}
 			settings = body;
 			fill(body.provider);
 			instructions = body.instructions ?? '';
 		} catch {
-			error = t('common.networkError');
+			loadError = t('common.networkError');
 		}
 	}
 
 	async function save(event: SubmitEvent) {
 		event.preventDefault();
 		busy = true;
-		error = '';
-		notice = '';
+		providerError = '';
+		providerNotice = '';
 		try {
 			const response = await fetch(endpoint, {
 				method: 'PUT',
@@ -122,16 +126,16 @@
 			});
 			const body = (await response.json()) as { provider?: Provider; error?: string };
 			if (!response.ok || !body.provider) {
-				error = body.error ?? t('common.tryAgain');
+				providerError = body.error ?? t('common.tryAgain');
 				return;
 			}
 			settings = { ...settings!, provider: body.provider };
 			fill(body.provider);
-			notice = t('ai.saved');
+			providerNotice = t('ai.saved');
 			// The shell decides whether to offer "Draft reply" from the layout data.
 			await invalidateAll();
 		} catch {
-			error = t('common.networkError');
+			providerError = t('common.networkError');
 		} finally {
 			busy = false;
 		}
@@ -140,8 +144,8 @@
 	async function saveInstructions(event: SubmitEvent) {
 		event.preventDefault();
 		savingInstructions = true;
-		error = '';
-		notice = '';
+		instructionsError = '';
+		instructionsNotice = '';
 		try {
 			const response = await fetch(endpoint, {
 				method: 'PATCH',
@@ -150,13 +154,13 @@
 			});
 			const body = (await response.json()) as { instructions?: string; error?: string };
 			if (!response.ok) {
-				error = body.error ?? t('common.tryAgain');
+				instructionsError = body.error ?? t('common.tryAgain');
 				return;
 			}
 			instructions = body.instructions ?? '';
-			notice = t('ai.instructionsSaved');
+			instructionsNotice = t('ai.instructionsSaved');
 		} catch {
-			error = t('common.networkError');
+			instructionsError = t('common.networkError');
 		} finally {
 			savingInstructions = false;
 		}
@@ -164,18 +168,18 @@
 
 	async function test() {
 		testing = true;
-		error = '';
-		notice = '';
+		providerError = '';
+		providerNotice = '';
 		try {
 			const response = await fetch(`${endpoint}/test`, { method: 'POST' });
 			const body = (await response.json()) as { model?: string; reply?: string; error?: string };
 			if (!response.ok) {
-				error = body.error ?? t('common.tryAgain');
+				providerError = body.error ?? t('common.tryAgain');
 				return;
 			}
-			notice = t('ai.testPassed', { model: body.model ?? '', reply: body.reply ?? '' });
+			providerNotice = t('ai.testPassed', { model: body.model ?? '', reply: body.reply ?? '' });
 		} catch {
-			error = t('common.networkError');
+			providerError = t('common.networkError');
 		} finally {
 			testing = false;
 		}
@@ -185,19 +189,19 @@
 		if (!confirm(scope === 'instance' ? t('ai.removeInstanceConfirm') : t('ai.removeOwnConfirm'))) {
 			return;
 		}
-		error = '';
-		notice = '';
+		providerError = '';
+		providerNotice = '';
 		try {
 			const response = await fetch(endpoint, { method: 'DELETE' });
 			if (!response.ok) {
-				error = t('common.tryAgain');
+				providerError = t('common.tryAgain');
 				return;
 			}
 			settings = { ...settings!, provider: null };
 			fill(null);
 			await invalidateAll();
 		} catch {
-			error = t('common.networkError');
+			providerError = t('common.networkError');
 		}
 	}
 </script>
@@ -289,6 +293,7 @@
 					{busy ? t('common.saving') : t('common.save')}
 				</button>
 			</div>
+			{@render feedback(providerNotice, providerError)}
 		</form>
 	{/if}
 
@@ -309,12 +314,20 @@
 					{savingInstructions ? t('common.saving') : t('common.save')}
 				</button>
 			</div>
+			{@render feedback(instructionsNotice, instructionsError)}
 		</form>
 	{/if}
 
-	{#if notice}<p class="notice" role="status">{notice}</p>{/if}
-	{#if error}<p class="error" role="alert">{error}</p>{/if}
+	<!-- Before the settings load there is no form to put a message under. -->
+	{#if !settings && loadError}<p class="error" role="alert">{loadError}</p>{/if}
 </section>
+
+{#snippet feedback(notice: string, error: string)}
+	{#if notice}
+		<p class="notice" role="status"><Icon name="check-line" size={15} /> {notice}</p>
+	{/if}
+	{#if error}<p class="error" role="alert">{error}</p>{/if}
+{/snippet}
 
 <style>
 	.card {
@@ -425,9 +438,15 @@
 
 	.notice,
 	.error {
-		margin: 0.75rem 0 0;
+		margin: 0;
 		font-size: 0.8125rem;
 		overflow-wrap: anywhere;
+	}
+
+	.notice {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
 	}
 
 	.error {
