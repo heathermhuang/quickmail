@@ -12,8 +12,15 @@ import {
 	markThreadRead,
 	setEmailFlags
 } from '$lib/server/mail-store';
-import { resolveReplyFromAddress, sendAndStore } from '$lib/server/outbox';
+import {
+	assertReplyReviewed,
+	replyTarget,
+	resolveReplyFromAddress,
+	sendAndStore
+} from '$lib/server/outbox';
 import { readIdempotencyKey } from '$lib/server/send-attempts';
+import { apiSendPolicyFor } from '$lib/server/send-policy';
+import { parseEmailAddresses } from '$lib/server/email-address';
 import { buildReferences, displaySubject } from '$lib/server/threads';
 import { isInboxCategory } from '$lib/mail/categories';
 import { rememberSenders } from '$lib/server/labels';
@@ -28,6 +35,8 @@ type ReplyBody = {
 	text?: string;
 	html?: string;
 	attachments?: OutboundAttachmentInput[];
+	/** The recipients a reviewing agent expects; the send fails if the thread moved on. */
+	expectedRecipients?: string[];
 };
 
 export const GET: RequestHandler = async ({ params, locals, platform }) => {
@@ -47,7 +56,7 @@ export const GET: RequestHandler = async ({ params, locals, platform }) => {
 	return json({
 		threadId: email.thread_id ?? email.id,
 		subject: displaySubject(messages[0]?.subject ?? email.subject),
-		messages
+		messages: messages.map((message) => ({ ...message, reply_target: replyTarget(message) }))
 	});
 };
 
@@ -164,6 +173,16 @@ export const POST: RequestHandler = async ({ params, request, locals, platform }
 		: await resolveReplyFromAddress(db, locals.user, original);
 
 	try {
+		if (Array.isArray(body.expectedRecipients)) {
+			await assertReplyReviewed(
+				db,
+				locals.user.id,
+				original,
+				parseEmailAddresses(to),
+				body.expectedRecipients.filter((value) => typeof value === 'string')
+			);
+		}
+
 		const provider = getEmailProvider(platform);
 		const { emailId } = await sendAndStore(
 			{ DB: db, ATTACHMENTS: bucket },
@@ -184,7 +203,8 @@ export const POST: RequestHandler = async ({ params, request, locals, platform }
 				references: buildReferences(original.references_header, original.message_id),
 				replyToEmailId: original.id,
 				attachments: body.attachments,
-				idempotencyKey
+				idempotencyKey,
+				apiPolicy: apiSendPolicyFor(locals.authMethod, platform?.env)
 			}
 		);
 
