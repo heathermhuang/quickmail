@@ -1,18 +1,23 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import type { D1Database } from '@cloudflare/workers-types';
-import type { User } from '$lib/types';
+import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
+import type { MailAddress, User } from '$lib/types';
 import {
 	MAX_ATTACHMENT_BYTES,
 	MAX_ATTACHMENTS_PER_EMAIL,
 	MAX_TOTAL_ATTACHMENT_BYTES
 } from './constants';
+import type { EmailProvider } from './email-provider';
 import {
 	assertOutboundAttachments,
 	assertTotalAttachmentBytes,
 	persistableAddressId,
-	resolveReplyFromAddress
+	resolveReplyFromAddress,
+	sendAndStore
 } from './outbox';
+import { SendAttemptError } from './send-attempts';
+import type { OutboundMailInput } from './send-mail';
+import { createTestDb, insertTestUser } from './test-db';
 
 const user: User = {
 	id: 'user-1',
@@ -267,5 +272,116 @@ describe('outbound attachment totals', () => {
 				]),
 			/exceeds 5MB limit/
 		);
+	});
+});
+
+describe('sendAndStore with an idempotency key', () => {
+	const from: MailAddress = {
+		id: 'addr-1',
+		user_id: user.id,
+		domain_id: 'dom-1',
+		domain_name: 'example.com',
+		address: 'ada@example.com',
+		label: 'Ada',
+		signature: null,
+		is_default: true,
+		created_at: user.created_at
+	};
+
+	function setup(send: (input: OutboundMailInput) => Promise<{ providerId: string }>) {
+		const { db, sqlite } = createTestDb();
+		insertTestUser(sqlite, user.id);
+		sqlite.query(`INSERT INTO domains (id, name) VALUES ('dom-1', 'example.com')`).run();
+		sqlite
+			.query(
+				`INSERT INTO addresses (id, user_id, domain_id, address, is_default)
+				 VALUES ('addr-1', ?, 'dom-1', 'ada@example.com', 1)`
+			)
+			.run(user.id);
+		const sent: OutboundMailInput[] = [];
+		const provider = {
+			kind: 'cloudflare',
+			async send(input: OutboundMailInput) {
+				sent.push(input);
+				return send(input);
+			}
+		} as unknown as EmailProvider;
+		const env = { DB: db, ATTACHMENTS: {} as R2Bucket };
+		const outbound = () =>
+			sqlite.query(`SELECT id FROM emails WHERE direction = 'outbound'`).all() as { id: string }[];
+		return { env, provider, sent, outbound };
+	}
+
+	const message = {
+		fromAddress: from,
+		to: 'sam@other.test',
+		subject: 'Hello',
+		text: 'Are we still on for Thursday?',
+		idempotencyKey: 'retry-key-0001'
+	};
+
+	test('a retry returns the first send instead of emailing again', async () => {
+		const { env, provider, sent, outbound } = setup(async () => ({ providerId: 'provider-1' }));
+
+		const first = await sendAndStore(env, provider, user, message);
+		const retry = await sendAndStore(env, provider, user, message);
+
+		assert.equal(sent.length, 1);
+		assert.equal(retry.emailId, first.emailId);
+		assert.equal(retry.providerId, 'provider-1');
+		assert.equal(outbound().length, 1);
+	});
+
+	test('the provider sees the same key on every attempt of one send', async () => {
+		let calls = 0;
+		const { env, provider, sent } = setup(async () => {
+			calls += 1;
+			if (calls === 1) throw new Error('Network timeout');
+			return { providerId: 'provider-1' };
+		});
+
+		await assert.rejects(sendAndStore(env, provider, user, message), /Network timeout/);
+		await sendAndStore(env, provider, user, message);
+
+		assert.equal(sent.length, 2);
+		assert.ok(sent[0].idempotencyKey);
+		assert.equal(sent[1].idempotencyKey, sent[0].idempotencyKey);
+	});
+
+	test('a failed send retried after an edit gets a fresh provider key', async () => {
+		let calls = 0;
+		const { env, provider, sent } = setup(async () => {
+			calls += 1;
+			if (calls === 1) throw new Error('Recipient rejected');
+			return { providerId: 'provider-1' };
+		});
+
+		await assert.rejects(sendAndStore(env, provider, user, message), /Recipient rejected/);
+		await sendAndStore(env, provider, user, { ...message, to: 'sam@fixed.test' });
+
+		assert.equal(sent.length, 2);
+		assert.notEqual(sent[1].idempotencyKey, sent[0].idempotencyKey);
+	});
+
+	test('reusing a key for a different message is refused without sending', async () => {
+		const { env, provider, sent } = setup(async () => ({ providerId: 'provider-1' }));
+
+		await sendAndStore(env, provider, user, message);
+		await assert.rejects(
+			sendAndStore(env, provider, user, { ...message, text: 'Actually, Friday?' }),
+			SendAttemptError
+		);
+		assert.equal(sent.length, 1);
+	});
+
+	test('without a key, every call sends', async () => {
+		const { env, provider, sent, outbound } = setup(async () => ({ providerId: 'provider-1' }));
+		const { idempotencyKey: _unused, ...unkeyed } = message;
+
+		await sendAndStore(env, provider, user, unkeyed);
+		await sendAndStore(env, provider, user, unkeyed);
+
+		assert.equal(sent.length, 2);
+		assert.equal(outbound().length, 2);
 	});
 });

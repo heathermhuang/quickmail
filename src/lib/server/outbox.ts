@@ -18,6 +18,12 @@ import { getEmailSignature } from './email-signature';
 import { stripHtml } from './html';
 import { insertEmail } from './mail-store';
 import { initialOutboundStatus, type EmailProvider } from './email-provider';
+import {
+	claimSendAttempt,
+	completeSendAttempt,
+	failSendAttempt,
+	sha256Hex
+} from './send-attempts';
 import { escapeHtml, parseRecipients, sendOutboundEmail } from './send-mail';
 
 export type ComposeInput = {
@@ -38,6 +44,8 @@ export type ComposeInput = {
 	allowCombinedAttachments?: boolean;
 	/** Disable subject fallback for messages that intentionally start a thread. */
 	subjectMatch?: boolean;
+	/** Retries with the same key return the first result instead of sending again. */
+	idempotencyKey?: string | null;
 };
 
 export function assertTotalAttachmentBytes(totalBytes: number): void {
@@ -145,6 +153,27 @@ export async function resolveReplyFromAddress(
 	return getDefaultAddress(db, user.id);
 }
 
+/** What the recipient would receive — a reused Idempotency-Key must match it. */
+function composeFingerprint(from: MailAddress, input: ComposeInput): Promise<string> {
+	return sha256Hex(
+		JSON.stringify({
+			from: from.address,
+			to: parseRecipients(input.to),
+			cc: parseRecipients(input.cc),
+			bcc: parseRecipients(input.bcc),
+			subject: input.subject.trim(),
+			text: input.text?.trim() ?? '',
+			html: input.html?.trim() ?? '',
+			inReplyTo: input.inReplyTo ?? null,
+			attachments: (input.attachments ?? []).map((attachment) => [
+				attachment.filename,
+				attachment.type,
+				attachment.content
+			])
+		})
+	);
+}
+
 /** Send through the configured provider, then record it in the Sent folder. */
 export async function sendAndStore(
 	env: { DB: D1Database; ATTACHMENTS: R2Bucket },
@@ -172,19 +201,40 @@ export async function sendAndStore(
 	const attachments = input.attachments ?? [];
 	assertOutboundAttachments(attachments, input.allowCombinedAttachments);
 
-	const { providerId } = await sendOutboundEmail(provider, {
-		from,
-		senderName: from.label?.trim() || user.name,
-		to: input.to,
-		cc: input.cc ?? undefined,
-		bcc: input.bcc ?? undefined,
-		subject: input.subject,
-		text,
-		html: html ?? undefined,
-		inReplyTo: input.inReplyTo,
-		references: input.references,
-		attachments
-	});
+	const fingerprint = input.idempotencyKey ? await composeFingerprint(from, input) : '';
+	const attempt = input.idempotencyKey
+		? await claimSendAttempt(env.DB, user.id, input.idempotencyKey, fingerprint)
+		: null;
+	if (attempt?.kind === 'replay') {
+		return { emailId: attempt.emailId, providerId: attempt.providerId, from };
+	}
+
+	let providerId: string;
+	try {
+		({ providerId } = await sendOutboundEmail(provider, {
+			from,
+			senderName: from.label?.trim() || user.name,
+			to: input.to,
+			cc: input.cc ?? undefined,
+			bcc: input.bcc ?? undefined,
+			subject: input.subject,
+			text,
+			html: html ?? undefined,
+			inReplyTo: input.inReplyTo,
+			references: input.references,
+			attachments,
+			// Resend dedupes on this too, which covers a timeout that hid a send. The
+			// content is part of it: a failed send retried after an edit is new mail.
+			...(attempt ? { idempotencyKey: `${attempt.id}:${fingerprint}` } : {})
+		}));
+	} catch (error) {
+		if (attempt) {
+			await failSendAttempt(env.DB, attempt.id, error).catch((failure) =>
+				console.error('Failed to record the failed send attempt', attempt.id, failure)
+			);
+		}
+		throw error;
+	}
 
 	const emailId = await insertEmail(env.DB, {
 		userId: user.id,
@@ -213,6 +263,8 @@ export async function sendAndStore(
 			enforceCountLimit: !input.allowCombinedAttachments
 		});
 	}
+
+	if (attempt) await completeSendAttempt(env.DB, attempt.id, emailId, providerId);
 
 	return { emailId, providerId, from };
 }
