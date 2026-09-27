@@ -36,6 +36,8 @@
 	let testing = $state(false);
 	let error = $state('');
 	let notice = $state('');
+	/** Which form's buttons the last result belongs under, so it shows where you clicked. */
+	let feedbackAt = $state<'provider' | 'instructions'>('provider');
 	let instructions = $state('');
 	let savingInstructions = $state(false);
 
@@ -114,6 +116,7 @@
 		busy = true;
 		error = '';
 		notice = '';
+		feedbackAt = 'provider';
 		try {
 			const response = await fetch(endpoint, {
 				method: 'PUT',
@@ -142,6 +145,7 @@
 		savingInstructions = true;
 		error = '';
 		notice = '';
+		feedbackAt = 'instructions';
 		try {
 			const response = await fetch(endpoint, {
 				method: 'PATCH',
@@ -166,6 +170,7 @@
 		testing = true;
 		error = '';
 		notice = '';
+		feedbackAt = 'provider';
 		try {
 			const response = await fetch(`${endpoint}/test`, { method: 'POST' });
 			const body = (await response.json()) as { model?: string; reply?: string; error?: string };
@@ -187,6 +192,7 @@
 		}
 		error = '';
 		notice = '';
+		feedbackAt = 'provider';
 		try {
 			const response = await fetch(endpoint, { method: 'DELETE' });
 			if (!response.ok) {
@@ -289,6 +295,7 @@
 					{busy ? t('common.saving') : t('common.save')}
 				</button>
 			</div>
+			{@render feedback('provider')}
 		</form>
 	{/if}
 
@@ -309,12 +316,22 @@
 					{savingInstructions ? t('common.saving') : t('common.save')}
 				</button>
 			</div>
+			{@render feedback('instructions')}
 		</form>
 	{/if}
 
-	{#if notice}<p class="notice" role="status">{notice}</p>{/if}
-	{#if error}<p class="error" role="alert">{error}</p>{/if}
+	<!-- Before the settings load there is no form to put a message under. -->
+	{#if !settings && error}<p class="error" role="alert">{error}</p>{/if}
 </section>
+
+{#snippet feedback(place: 'provider' | 'instructions')}
+	{#if feedbackAt === place}
+		{#if notice}
+			<p class="notice" role="status"><Icon name="check-line" size={15} /> {notice}</p>
+		{/if}
+		{#if error}<p class="error" role="alert">{error}</p>{/if}
+	{/if}
+{/snippet}
 
 <style>
 	.card {
@@ -425,9 +442,15 @@
 
 	.notice,
 	.error {
-		margin: 0.75rem 0 0;
+		margin: 0;
 		font-size: 0.8125rem;
 		overflow-wrap: anywhere;
+	}
+
+	.notice {
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
 	}
 
 	.error {
