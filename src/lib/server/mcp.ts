@@ -370,12 +370,11 @@ export function createMcpServer(ctx: McpContext): McpServer {
 						.describe("Copy that message's reply_target from get_thread exactly."),
 					text: z.string().optional(),
 					html: z.string().optional(),
-					cc: z.string().optional(),
 					fromAddressId: z.string().optional(),
 					idempotency_key: idempotencyKey
 				}
 			},
-			async ({ id, expected_recipients, text, html, cc, fromAddressId, idempotency_key }) => {
+			async ({ id, expected_recipients, text, html, fromAddressId, idempotency_key }) => {
 				if (!text?.trim() && !html?.trim()) return textResult('text or html is required', true);
 				if (!ctx.bucket) return textResult('Sending is not configured on this server', true);
 				try {
@@ -401,7 +400,6 @@ export function createMcpServer(ctx: McpContext): McpServer {
 							fromAddressId,
 							fromAddress,
 							to: recipient,
-							cc: cc?.trim() || undefined,
 							subject,
 							text,
 							html,

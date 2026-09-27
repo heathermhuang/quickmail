@@ -82,6 +82,15 @@ describe('hosted MCP tools', () => {
 		}
 	});
 
+	test('reply has no way to add recipients beyond the reviewed target', async () => {
+		const { client } = await connect();
+		const reply = (await client.listTools()).tools.find((tool) => tool.name === 'reply');
+		const fields = Object.keys(reply?.inputSchema.properties ?? {});
+
+		assert.ok(fields.includes('expected_recipients'));
+		for (const field of ['to', 'cc', 'bcc']) assert.ok(!fields.includes(field), field);
+	});
+
 	test('the instance switch removes the send tools but keeps triage', async () => {
 		const { client } = await connect({ sendEnabled: false });
 		const names = (await client.listTools()).tools.map((tool) => tool.name);

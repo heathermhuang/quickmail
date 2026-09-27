@@ -178,7 +178,8 @@ export const POST: RequestHandler = async ({ params, request, locals, platform }
 				db,
 				locals.user.id,
 				original,
-				parseEmailAddresses(to),
+				// Every recipient counts: a Cc is as much an audience as the To.
+				parseEmailAddresses([to, cc, bcc].filter(Boolean).join(',')),
 				body.expectedRecipients.filter((value) => typeof value === 'string')
 			);
 		}
