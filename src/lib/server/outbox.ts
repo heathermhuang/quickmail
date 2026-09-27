@@ -17,14 +17,16 @@ import { parseEmailAddress } from './email-address';
 import { getEmailSignature } from './email-signature';
 import { stripHtml } from './html';
 import { insertEmail } from './mail-store';
-import { initialOutboundStatus, type EmailProvider } from './email-provider';
+import { initialOutboundStatus, ProviderError, type EmailProvider } from './email-provider';
 import {
 	claimSendAttempt,
 	completeSendAttempt,
 	failSendAttempt,
+	markSendUncertain,
+	recordProviderAccepted,
 	sha256Hex
 } from './send-attempts';
-import { escapeHtml, parseRecipients, sendOutboundEmail } from './send-mail';
+import { escapeHtml, parseRecipients, sendOutboundEmail, validateSubject } from './send-mail';
 
 export type ComposeInput = {
 	fromAddressId?: string | null;
@@ -174,6 +176,17 @@ function composeFingerprint(from: MailAddress, input: ComposeInput): Promise<str
 	);
 }
 
+/**
+ * Whether the provider refused the message, so it certainly was not sent.
+ * Lost responses, timeouts and server errors are ambiguous: it may be out.
+ * Cloudflare binding errors that carry no code (`send_failed`) count as ambiguous.
+ */
+export function providerRefused(error: unknown): boolean {
+	if (!(error instanceof ProviderError)) return false;
+	if (error.code === 'E_RATE_LIMIT_EXCEEDED') return true;
+	return error.status >= 400 && error.status < 500 && error.code !== 'send_failed';
+}
+
 /** Send through the configured provider, then record it in the Sent folder. */
 export async function sendAndStore(
 	env: { DB: D1Database; ATTACHMENTS: R2Bucket },
@@ -200,6 +213,13 @@ export async function sendAndStore(
 
 	const attachments = input.attachments ?? [];
 	assertOutboundAttachments(attachments, input.allowCombinedAttachments);
+
+	// Checked before an attempt is claimed, so a typo never locks its key.
+	const subjectError = validateSubject(input.subject);
+	if (subjectError) throw new Error(subjectError);
+	if (parseRecipients(input.to).length === 0) {
+		throw new Error('At least one valid recipient is required');
+	}
 
 	const fingerprint = input.idempotencyKey ? await composeFingerprint(from, input) : '';
 	const attempt = input.idempotencyKey
@@ -229,12 +249,15 @@ export async function sendAndStore(
 		}));
 	} catch (error) {
 		if (attempt) {
-			await failSendAttempt(env.DB, attempt.id, error).catch((failure) =>
+			const record = providerRefused(error) ? failSendAttempt : markSendUncertain;
+			await record(env.DB, attempt.id, error).catch((failure) =>
 				console.error('Failed to record the failed send attempt', attempt.id, failure)
 			);
 		}
 		throw error;
 	}
+
+	if (attempt) await recordProviderAccepted(env.DB, attempt.id, providerId);
 
 	const emailId = await insertEmail(env.DB, {
 		userId: user.id,

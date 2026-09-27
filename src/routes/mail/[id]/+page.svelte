@@ -236,6 +236,8 @@
 	function openReply() {
 		forwardTarget = null;
 		replyOpen = !replyOpen;
+		// An empty composer starts a new message; kept text is the same one resumed.
+		if (replyOpen && isHtmlEmpty(replyHtml)) replyKey = crypto.randomUUID();
 		error = '';
 	}
 
@@ -246,6 +248,7 @@
 			(target.kind === 'thread' ||
 				(forwardTarget.kind === 'message' && forwardTarget.id === target.id));
 		forwardTarget = sameTarget ? null : target;
+		if (forwardTarget && isHtmlEmpty(forwardHtml)) forwardKey = crypto.randomUUID();
 		includeAttachments = true;
 		error = '';
 	}

@@ -13,7 +13,11 @@ export const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 /** UUIDs and similar opaque keys; long enough that collisions are the caller's intent. */
 export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,200}$/;
 
-export type SendAttemptErrorCode = 'idempotency_conflict' | 'send_in_progress';
+export type SendAttemptErrorCode =
+	| 'idempotency_conflict'
+	| 'send_in_progress'
+	| 'send_outcome_unknown'
+	| 'already_sent';
 
 export class SendAttemptError extends Error {
 	readonly status = 409;
@@ -81,7 +85,7 @@ export async function claimSendAttempt(
 
 	const existing = await db
 		.prepare(
-			`SELECT status, request_hash, email_id, provider_id
+			`SELECT status, request_hash, email_id, provider_id, error
 			 FROM send_attempts WHERE id = ? AND user_id = ?`
 		)
 		.bind(id, userId)
@@ -90,6 +94,7 @@ export async function claimSendAttempt(
 			request_hash: string;
 			email_id: string | null;
 			provider_id: string | null;
+			error: string | null;
 		}>();
 
 	if (existing && existing.request_hash !== requestHash) {
@@ -100,6 +105,19 @@ export async function claimSendAttempt(
 	}
 	if (existing?.status === 'sent' && existing.email_id && existing.provider_id) {
 		return { kind: 'replay', id, emailId: existing.email_id, providerId: existing.provider_id };
+	}
+	// Still `sending` with a provider id: the mail went out and only saving it to
+	// Sent is outstanding (or failed). Sending again would duplicate it.
+	if (existing?.provider_id) {
+		throw new SendAttemptError('already_sent', 'This message was already sent.');
+	}
+	// Still `sending` with an error: the provider failed in a way that does not
+	// rule out delivery, such as a lost response.
+	if (existing?.error) {
+		throw new SendAttemptError(
+			'send_outcome_unknown',
+			"We couldn't confirm whether this message was sent. Check Sent, or with the recipient, before sending it again."
+		);
 	}
 	throw new SendAttemptError(
 		'send_in_progress',
@@ -123,6 +141,37 @@ export async function completeSendAttempt(
 		.run();
 }
 
+/** The provider accepted the message: from here on a retry must never send again. */
+export async function recordProviderAccepted(
+	db: D1Database,
+	id: string,
+	providerId: string
+): Promise<void> {
+	await db
+		.prepare(
+			`UPDATE send_attempts SET provider_id = ?, updated_at = datetime('now')
+			 WHERE id = ? AND status = 'sending'`
+		)
+		.bind(providerId, id)
+		.run();
+}
+
+/**
+ * The provider failed without saying the message was refused, so it may have
+ * gone out. The attempt stays claimed; a retry is told the outcome is unknown.
+ */
+export async function markSendUncertain(db: D1Database, id: string, error: unknown): Promise<void> {
+	const message = error instanceof Error ? error.message : 'Send failed';
+	await db
+		.prepare(
+			`UPDATE send_attempts SET error = ?, updated_at = datetime('now')
+			 WHERE id = ? AND status = 'sending'`
+		)
+		.bind(message.slice(0, 2000) || 'Send failed', id)
+		.run();
+}
+
+/** The message certainly did not go out, so its key may be used again. */
 export async function failSendAttempt(db: D1Database, id: string, error: unknown): Promise<void> {
 	const message = error instanceof Error ? error.message : 'Send failed';
 	await db

@@ -7,7 +7,7 @@ import {
 	MAX_ATTACHMENTS_PER_EMAIL,
 	MAX_TOTAL_ATTACHMENT_BYTES
 } from './constants';
-import type { EmailProvider } from './email-provider';
+import { ProviderError, type EmailProvider } from './email-provider';
 import {
 	assertOutboundAttachments,
 	assertTotalAttachmentBytes,
@@ -309,7 +309,7 @@ describe('sendAndStore with an idempotency key', () => {
 		const env = { DB: db, ATTACHMENTS: {} as R2Bucket };
 		const outbound = () =>
 			sqlite.query(`SELECT id FROM emails WHERE direction = 'outbound'`).all() as { id: string }[];
-		return { env, provider, sent, outbound };
+		return { env, provider, sent, outbound, sqlite };
 	}
 
 	const message = {
@@ -332,15 +332,17 @@ describe('sendAndStore with an idempotency key', () => {
 		assert.equal(outbound().length, 1);
 	});
 
-	test('the provider sees the same key on every attempt of one send', async () => {
+	const refused = () => new ProviderError(400, 'E_SENDER_NOT_VERIFIED', 'Sender not verified');
+
+	test('a send the provider refused can be retried under the same key', async () => {
 		let calls = 0;
 		const { env, provider, sent } = setup(async () => {
 			calls += 1;
-			if (calls === 1) throw new Error('Network timeout');
+			if (calls === 1) throw refused();
 			return { providerId: 'provider-1' };
 		});
 
-		await assert.rejects(sendAndStore(env, provider, user, message), /Network timeout/);
+		await assert.rejects(sendAndStore(env, provider, user, message), /Sender not verified/);
 		await sendAndStore(env, provider, user, message);
 
 		assert.equal(sent.length, 2);
@@ -348,15 +350,57 @@ describe('sendAndStore with an idempotency key', () => {
 		assert.equal(sent[1].idempotencyKey, sent[0].idempotencyKey);
 	});
 
-	test('a failed send retried after an edit gets a fresh provider key', async () => {
+	test('an ambiguous failure never sends again under the same key', async () => {
+		for (const failure of [
+			new Error('Network connection lost'),
+			// Cloudflare binding errors without a code are wrapped this way.
+			new ProviderError(400, 'send_failed', 'Internal error'),
+			new ProviderError(502, 'resend_error', 'Bad gateway')
+		]) {
+			const { env, provider, sent } = setup(async () => {
+				throw failure;
+			});
+
+			await assert.rejects(sendAndStore(env, provider, user, message));
+			await assert.rejects(
+				sendAndStore(env, provider, user, message),
+				(error: unknown) =>
+					error instanceof SendAttemptError && error.code === 'send_outcome_unknown'
+			);
+			assert.equal(sent.length, 1, failure.message);
+		}
+	});
+
+	test('a mistake caught before sending does not lock the key', async () => {
+		const { env, provider, sent } = setup(async () => ({ providerId: 'provider-1' }));
+
+		await assert.rejects(sendAndStore(env, provider, user, { ...message, to: 'not-an-address' }));
+		await sendAndStore(env, provider, user, message);
+
+		assert.equal(sent.length, 1);
+	});
+
+	test('a send that went out but failed to save is not sent again', async () => {
+		const { env, provider, sent, sqlite } = setup(async () => ({ providerId: 'provider-1' }));
+		sqlite.exec('ALTER TABLE emails RENAME TO emails_unavailable');
+
+		await assert.rejects(sendAndStore(env, provider, user, message));
+		await assert.rejects(
+			sendAndStore(env, provider, user, message),
+			(error: unknown) => error instanceof SendAttemptError && error.code === 'already_sent'
+		);
+		assert.equal(sent.length, 1);
+	});
+
+	test('a refused send retried after an edit gets a fresh provider key', async () => {
 		let calls = 0;
 		const { env, provider, sent } = setup(async () => {
 			calls += 1;
-			if (calls === 1) throw new Error('Recipient rejected');
+			if (calls === 1) throw refused();
 			return { providerId: 'provider-1' };
 		});
 
-		await assert.rejects(sendAndStore(env, provider, user, message), /Recipient rejected/);
+		await assert.rejects(sendAndStore(env, provider, user, message), /Sender not verified/);
 		await sendAndStore(env, provider, user, { ...message, to: 'sam@fixed.test' });
 
 		assert.equal(sent.length, 2);

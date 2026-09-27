@@ -303,6 +303,8 @@
 	}
 
 	function startReply(mode: ReplyMode, message: ThreadMessage) {
+		// A new reply or forward is a new message, so it gets its own key.
+		sendKey = crypto.randomUUID();
 		replyMode = mode;
 		replyTarget = message;
 		replyOpen = true;
