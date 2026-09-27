@@ -1044,16 +1044,20 @@ async function setupTypesafe() {
  * generated once and never replaced: a new value makes every saved key
  * unreadable.
  */
-function ensureEncryptionKey() {
+function ensureEncryptionKey(workerName) {
 	const listed = tryWrangler(['secret', 'list']);
-	if (!listed.ok) {
+	// On a first run this Worker is not deployed yet, so listing fails with
+	// wrangler's `Worker "<name>" not found` — it has no secrets, and creating the
+	// key is safe. Any other failure might hide an existing key.
+	const firstRun = !listed.ok && listed.text.includes(`Worker "${workerName}" not found`);
+	if (listed.ok && /\bENCRYPTION_KEY\b/.test(listed.text)) {
+		ok('ENCRYPTION_KEY is already set; keeping it');
+	} else if (listed.ok || firstRun) {
+		putSecret('ENCRYPTION_KEY', randomBytes(32).toString('base64'));
+	} else {
 		// Can't tell whether one exists, and replacing it would lose every saved key.
 		warn('Could not list Worker secrets, so ENCRYPTION_KEY was left alone.');
 		warn('If it is not set yet: openssl rand -base64 32 | bunx wrangler secret put ENCRYPTION_KEY');
-	} else if (/\bENCRYPTION_KEY\b/.test(listed.text)) {
-		ok('ENCRYPTION_KEY is already set; keeping it');
-	} else {
-		putSecret('ENCRYPTION_KEY', randomBytes(32).toString('base64'));
 	}
 
 	const local = existsSync(devVarsFile) ? readFileSync(devVarsFile, 'utf8') : '';
@@ -1204,7 +1208,7 @@ async function main() {
 
 	section(7, total, 'Inbox tabs and AI drafting');
 	const typesafeKey = await setupTypesafe();
-	ensureEncryptionKey();
+	ensureEncryptionKey(workerName);
 
 	section(8, total, 'Database');
 	migrate(true, false);
