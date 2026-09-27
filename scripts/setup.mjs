@@ -1046,7 +1046,11 @@ async function setupTypesafe() {
  */
 function ensureEncryptionKey() {
 	const listed = tryWrangler(['secret', 'list']);
-	if (listed.ok && /\bENCRYPTION_KEY\b/.test(listed.text)) {
+	if (!listed.ok) {
+		// Can't tell whether one exists, and replacing it would lose every saved key.
+		warn('Could not list Worker secrets, so ENCRYPTION_KEY was left alone.');
+		warn('If it is not set yet: openssl rand -base64 32 | bunx wrangler secret put ENCRYPTION_KEY');
+	} else if (/\bENCRYPTION_KEY\b/.test(listed.text)) {
 		ok('ENCRYPTION_KEY is already set; keeping it');
 	} else {
 		putSecret('ENCRYPTION_KEY', randomBytes(32).toString('base64'));
