@@ -368,6 +368,7 @@
 		if (!message || drafting) return;
 		if (!isHtmlEmpty(replyHtml) && !confirm(t('thread.replaceWithDraft'))) return;
 
+		const before = replyHtml;
 		drafting = true;
 		sendError = '';
 		try {
@@ -375,6 +376,13 @@
 				method: 'POST'
 			});
 			const body = (await response.json()) as { text?: string; error?: string };
+			// The reply may have moved on — closed, sent, or another thread — while
+			// the model was writing; never drop a draft into the wrong composer.
+			if (!replyOpen || (replyTarget ?? latest)?.id !== message.id) return;
+			if (replyHtml !== before) {
+				sendError = t('thread.draftStale');
+				return;
+			}
 			if (!response.ok || !body.text) {
 				sendError = body.error ?? t('thread.draftFailed');
 				return;
@@ -389,6 +397,8 @@
 
 	async function sendReply() {
 		const message = replyTarget ?? latest;
+		// Wait for a draft in progress rather than send what is about to be replaced.
+		if (drafting) return;
 		if (!message || (!forwarding && isHtmlEmpty(replyHtml))) return;
 		if (forwarding && !replyTo.trim()) {
 			sendError = t('thread.addRecipient');

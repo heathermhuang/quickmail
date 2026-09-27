@@ -41,7 +41,7 @@ function bodyOf(message: ThreadMessage): string {
 
 /** Keep a message from closing its own tag and posing as the prompt. */
 function fence(value: string): string {
-	return value.replace(/<\/?message\b/gi, (tag) => tag.replace('message', 'message_'));
+	return value.replace(/<\/?message\b/gi, (tag) => tag.replace(/message/i, (word) => `${word}_`));
 }
 
 function attribute(value: string): string {

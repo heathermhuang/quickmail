@@ -343,7 +343,8 @@
 		"draftReply": "起草回复",
 		"drafting": "起草中…",
 		"replaceWithDraft": "用 AI 草稿替换你已写的内容？",
-		"draftFailed": "无法起草回复。"
+		"draftFailed": "无法起草回复。",
+		"draftStale": "草稿已丢弃：起草期间回复内容已更改。"
 	},
 	"search": {
 		"title": "搜索",

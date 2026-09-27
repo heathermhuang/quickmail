@@ -343,7 +343,8 @@
 		"draftReply": "Rédiger une réponse",
 		"drafting": "Rédaction…",
 		"replaceWithDraft": "Remplacer votre texte par un brouillon rédigé par l’IA ?",
-		"draftFailed": "Impossible de rédiger une réponse."
+		"draftFailed": "Impossible de rédiger une réponse.",
+		"draftStale": "Brouillon abandonné : la réponse a changé pendant sa rédaction."
 	},
 	"search": {
 		"title": "Recherche",

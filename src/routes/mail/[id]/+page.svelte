@@ -301,13 +301,21 @@
 		if (!latest || drafting) return;
 		if (!isHtmlEmpty(replyHtml) && !confirm(t('thread.replaceWithDraft'))) return;
 
+		const target = latest.id;
+		const before = replyHtml;
 		drafting = true;
 		error = '';
 		try {
-			const res = await fetch(`/api/mail/${encodeURIComponent(latest.id)}/draft-reply`, {
+			const res = await fetch(`/api/mail/${encodeURIComponent(target)}/draft-reply`, {
 				method: 'POST'
 			});
 			const body = (await res.json()) as { text?: string; error?: string };
+			// The reply may have moved on while the model was writing.
+			if (!replyOpen || latest?.id !== target) return;
+			if (replyHtml !== before) {
+				error = t('thread.draftStale');
+				return;
+			}
 			if (!res.ok || !body.text) {
 				error = body.error ?? t('thread.draftFailed');
 				return;
@@ -323,7 +331,8 @@
 	/** Replies continue from the newest message, so the chain stays intact. */
 	async function sendReply(event: SubmitEvent) {
 		event.preventDefault();
-		if (!latest || isHtmlEmpty(replyHtml)) return;
+		// Wait for a draft in progress rather than send what is about to be replaced.
+		if (!latest || drafting || isHtmlEmpty(replyHtml)) return;
 
 		sending = true;
 		error = '';
@@ -618,7 +627,7 @@
 					<button type="button" class="btn-ghost" onclick={() => (replyOpen = false)}>
 						{t('common.cancel')}
 					</button>
-					<button type="submit" class="btn-primary" disabled={sending}>
+					<button type="submit" class="btn-primary" disabled={sending || drafting}>
 						<Icon name="send-plane-2-fill" size={16} />
 						{sending ? t('common.sending') : t('common.send')}
 					</button>

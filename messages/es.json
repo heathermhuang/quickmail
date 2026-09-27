@@ -343,7 +343,8 @@
 		"draftReply": "Redactar respuesta",
 		"drafting": "Redactando…",
 		"replaceWithDraft": "¿Reemplazar lo que escribiste por un borrador de la IA?",
-		"draftFailed": "No se pudo redactar una respuesta."
+		"draftFailed": "No se pudo redactar una respuesta.",
+		"draftStale": "Borrador descartado: la respuesta cambió mientras se redactaba."
 	},
 	"search": {
 		"title": "Buscar",

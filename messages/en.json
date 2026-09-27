@@ -343,7 +343,8 @@
 		"draftReply": "Draft reply",
 		"drafting": "Drafting…",
 		"replaceWithDraft": "Replace what you've written with an AI draft?",
-		"draftFailed": "Couldn't draft a reply."
+		"draftFailed": "Couldn't draft a reply.",
+		"draftStale": "Draft discarded: the reply changed while it was being written."
 	},
 	"search": {
 		"title": "Search",
